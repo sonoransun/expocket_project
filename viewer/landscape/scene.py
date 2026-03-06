@@ -39,6 +39,7 @@ class DataLandscapeScene:
 
         self._variant_meshes: dict[str, pygfx.Mesh] = {}
         self._variant_positions: dict[str, np.ndarray] = {}
+        self._mesh_to_variant: dict[int, str] = {}  # id(mesh) -> variant_id
         self._dataset: VariantDataset | None = None
         self._layout_mode: str = "grid"  # "grid" or "pca"
 
@@ -48,6 +49,7 @@ class DataLandscapeScene:
         self._highlight_group.clear()
         self._variant_meshes.clear()
         self._variant_positions.clear()
+        self._mesh_to_variant.clear()
 
     def set_layout_mode(self, mode: str) -> None:
         """Switch between 'grid' and 'pca' layout modes."""
@@ -113,6 +115,7 @@ class DataLandscapeScene:
             self._points_group.add(mesh)
             self._variant_meshes[vid] = mesh
             self._variant_positions[vid] = pos
+            self._mesh_to_variant[id(mesh)] = vid
 
     def _build_grid_scatter(
         self, dataset: VariantDataset, cleavage_site: int
@@ -155,6 +158,7 @@ class DataLandscapeScene:
             self._points_group.add(mesh)
             self._variant_meshes[vid] = mesh
             self._variant_positions[vid] = pos
+            self._mesh_to_variant[id(mesh)] = vid
 
     def _add_axes(self, cleavage_site: int) -> None:
         """Add axis lines and group labels."""
@@ -247,6 +251,10 @@ class DataLandscapeScene:
     ) -> None:
         """Rebuild the scatter for a different cleavage site."""
         self.build_scatter(dataset, site)
+
+    def get_variant_for_mesh(self, mesh: pygfx.Mesh) -> str | None:
+        """Look up variant_id by mesh object (for pick events)."""
+        return self._mesh_to_variant.get(id(mesh))
 
     def get_nearest_variant(self, world_pos: np.ndarray) -> str | None:
         """Find the variant closest to a world position (for picking)."""

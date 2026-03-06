@@ -88,6 +88,12 @@ class MainWindow(QMainWindow):
         # Gene panel (bottom dock)
         self._init_gene_panel()
 
+        # Synthesis panel (right dock)
+        self._init_synthesis_panel()
+
+        # Replacement panel (right dock)
+        self._init_replacement_panel()
+
         # Interaction controller
         self.controller = InteractionController(
             rna_scene=self.rna_widget.scene_manager,
@@ -155,6 +161,50 @@ class MainWindow(QMainWindow):
         except ImportError:
             self.gene_panel = None
 
+    def _init_synthesis_panel(self) -> None:
+        """Initialize the synthesis planning dock."""
+        try:
+            from viewer.chemistry.synthesis_pathway import SynthesisPlanner
+            from viewer.ui.synthesis_panel import SynthesisPanel
+
+            self._synthesis_planner = SynthesisPlanner(self.dataset)
+            self.synthesis_panel = SynthesisPanel()
+            self.synthesis_panel.set_planner(self._synthesis_planner, self.dataset)
+            dock = QDockWidget("Synthesis Plan", self)
+            dock.setWidget(self.synthesis_panel)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        except ImportError:
+            self.synthesis_panel = None
+            self._synthesis_planner = None
+
+    def _init_replacement_panel(self) -> None:
+        """Initialize the replacement chemistry dock."""
+        try:
+            from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
+            from viewer.chemistry.double_screen import DoubleReplacementScreener
+            from viewer.chemistry.modification_engine import ModificationEngine
+            from viewer.ui.replacement_panel import ReplacementPanel
+
+            # Reuse existing engines if chemistry panel created them
+            if not hasattr(self, '_mod_engine'):
+                self._mod_engine = ModificationEngine(self.dataset)
+            if not hasattr(self, '_predictor'):
+                self._predictor = CleavageSitePredictor(self.dataset)
+
+            self._double_screener = DoubleReplacementScreener(
+                self.dataset, self._predictor, self._mod_engine
+            )
+            self.replacement_panel = ReplacementPanel()
+            self.replacement_panel.set_engines(
+                self._mod_engine, self._predictor, self._double_screener, self.dataset
+            )
+            dock = QDockWidget("Replacement Chemistry", self)
+            dock.setWidget(self.replacement_panel)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        except ImportError:
+            self.replacement_panel = None
+            self._double_screener = None
+
     def _connect_signals(self) -> None:
         # Sidebar -> controller
         self.sidebar.cleavage_site_changed.connect(
@@ -195,6 +245,40 @@ class MainWindow(QMainWindow):
                 self.chemistry_panel.set_variant
             )
 
+        # Synthesis panel signals
+        if hasattr(self, 'synthesis_panel') and self.synthesis_panel is not None:
+            self.controller.variant_selected.connect(
+                self.synthesis_panel.set_variant
+            )
+            self.controller.synthesis_updated.connect(
+                self._on_synthesis_updated
+            )
+            self.synthesis_panel.synthesis_updated.connect(
+                self._on_synthesis_plan_ready
+            )
+
+        # Replacement panel signals
+        if hasattr(self, 'replacement_panel') and self.replacement_panel is not None:
+            self.controller.variant_selected.connect(
+                self.replacement_panel.set_variant
+            )
+            self.replacement_panel.replacement_applied.connect(
+                self.controller.on_replacement_applied
+            )
+            self.replacement_panel.comparison_ready.connect(
+                self._on_comparison_ready
+            )
+
+        # 2D analysis: wire chemistry engines and variant updates
+        if self.analysis_tabs is not None:
+            if hasattr(self, '_predictor') and hasattr(self, '_mod_engine'):
+                self.analysis_tabs.set_chemistry_engines(
+                    self._predictor, self._mod_engine
+                )
+            self.controller.variant_selected.connect(
+                self.analysis_tabs.set_current_variant
+            )
+
     def _on_variant_selected(self, variant_id: str) -> None:
         self.info_panel.update_variant(variant_id, self.controller.dataset)
 
@@ -220,6 +304,21 @@ class MainWindow(QMainWindow):
 
         if self.analysis_tabs is not None:
             self.analysis_tabs.set_dataset(self.dataset)
+
+    def _on_synthesis_updated(self, variant_id: str) -> None:
+        """Refresh synthesis panel when modifications change."""
+        if hasattr(self, 'synthesis_panel') and self.synthesis_panel is not None:
+            self.synthesis_panel.refresh()
+
+    def _on_synthesis_plan_ready(self, variant_id: str) -> None:
+        """Push synthesis plan to 2D diagram tab."""
+        if self.analysis_tabs is not None and hasattr(self, 'synthesis_panel') and self.synthesis_panel is not None:
+            self.analysis_tabs.update_synthesis(self.synthesis_panel.current_plan)
+
+    def _on_comparison_ready(self, comparison: dict) -> None:
+        """Push replacement comparison data to 2D tab."""
+        if self.analysis_tabs is not None:
+            self.analysis_tabs.update_replacement(comparison)
 
     def _on_pocket_toggled(self, visible: bool) -> None:
         self._pocket_overlay.set_visible(visible)

@@ -251,6 +251,13 @@ class RNAHairpinScene:
             mesh.local.position = tuple(base_pos)
             self._modifications_group.add(mesh)
 
+    def update_modifications_only(self, mod_state: ModificationState | None) -> None:
+        """Incrementally update only the modification overlays."""
+        self._modifications_group.clear()
+        self._current_mod_state = mod_state
+        if mod_state and mod_state.modifications and self._layout:
+            self._add_modifications(self._layout, mod_state)
+
     def set_color_mode(self, mode: str) -> None:
         """Change base coloring mode and rebuild bases only."""
         self._color_mode = mode

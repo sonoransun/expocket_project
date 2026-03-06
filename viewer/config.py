@@ -100,3 +100,18 @@ MODIFICATION_COLORS = {
     "m5C": (0.5, 0.8, 0.7, 0.85),
     "INO": (0.6, 0.4, 0.8, 0.85),
 }
+
+# Synthesis yield display thresholds and colors
+YIELD_COLORS = {
+    "good": "#5AC9A1",   # > 50% yield
+    "warn": "#FFAE42",   # 20-50% yield
+    "poor": "#f44",      # < 20% yield
+}
+YIELD_THRESHOLDS = {"good": 0.5, "warn": 0.2}
+
+# Synergy display colors for double replacement screening
+SYNERGY_COLORS = {
+    "cooperative": "#5AC9A1",    # synergy > 0
+    "antagonistic": "#f44",      # synergy < 0
+    "neutral": "#888",           # synergy ~ 0
+}

@@ -34,11 +34,41 @@ class DataLandscapeWidget(QWidget):
 
         self.canvas.request_draw(self._animate)
 
+        # Wire picking via double-click to avoid interfering with orbit
+        self.renderer.add_event_handler(self._on_pointer_down, "double_click")
+
     def _animate(self) -> None:
         self.renderer.render(
             self.scene_manager.scene, self.scene_manager.camera
         )
         self.canvas.request_draw(self._animate)
+
+    def _on_pointer_down(self, event) -> None:
+        """Handle double-click for variant picking."""
+        try:
+            # Use pygfx picking if available
+            pick_info = self.renderer.get_pick_info(event)
+            if pick_info and "world_object" in pick_info:
+                mesh = pick_info["world_object"]
+                if isinstance(mesh, pygfx.Mesh):
+                    vid = self.scene_manager.get_variant_for_mesh(mesh)
+                    if vid:
+                        self.variant_clicked.emit(vid)
+                        return
+        except (AttributeError, TypeError):
+            pass
+
+        # Fallback: use nearest-variant by world position
+        try:
+            if hasattr(event, "x") and hasattr(event, "y"):
+                import numpy as np
+                # Approximate: project screen center to world
+                pos = np.array([event.x, event.y, 0.0])
+                vid = self.scene_manager.get_nearest_variant(pos)
+                if vid:
+                    self.variant_clicked.emit(vid)
+        except Exception:
+            pass
 
     def load_dataset(
         self, dataset: VariantDataset, cleavage_site: int = 21

@@ -94,3 +94,45 @@ class EnrichedVariantDataset(VariantDataset):
         if variant_id not in self.modification_states:
             self.modification_states[variant_id] = ModificationState(variant=variant_id)
         return self.modification_states[variant_id]
+
+
+@dataclass
+class SynthesisStep:
+    """One coupling step in phosphoramidite oligonucleotide synthesis."""
+
+    position: int  # 0-indexed from 3' (synthesis direction)
+    nucleotide: str
+    modification: str | None
+    monomer_name: str
+    coupling_efficiency: float
+    cumulative_yield: float
+    deprotection: str
+    cost_factor: float
+    notes: str = ""
+
+
+@dataclass
+class SynthesisPlan:
+    """Complete synthesis plan for a modified oligonucleotide."""
+
+    variant_id: str
+    sequence: str
+    modifications: dict[int, str] = field(default_factory=dict)
+    steps: list[SynthesisStep] = field(default_factory=list)
+    total_yield: float = 0.0
+    total_cost_factor: float = 0.0
+    incompatibilities: list[str] = field(default_factory=list)
+    scale_nmol: int = 200
+
+
+@dataclass
+class ReplacementResult:
+    """Result of a single or double nucleotide/modification replacement."""
+
+    positions: list[int] = field(default_factory=list)
+    original_bases: list[str] = field(default_factory=list)
+    replacements: list[str] = field(default_factory=list)
+    shifts: dict[int, float] = field(default_factory=dict)
+    dc_ratio_shift: float = 0.0
+    synthesis_feasible: bool = True
+    estimated_yield: float = 0.0

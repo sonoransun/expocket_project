@@ -16,6 +16,8 @@ class InteractionController(QObject):
     cleavage_site_changed = Signal(int)
     enzyme_changed = Signal(str)
     modification_applied = Signal(str, int, str)  # variant_id, position, mod_code
+    replacement_applied = Signal(str, dict)  # variant_id, {pos: mod_code}
+    synthesis_updated = Signal(str)  # variant_id
     color_mode_changed = Signal(str)
     landscape_mode_changed = Signal(str)
 
@@ -103,7 +105,23 @@ class InteractionController(QObject):
     def on_modification_applied(
         self, variant_id: str, position: int, mod_code: str
     ) -> None:
-        """Handle a modification being applied — refresh the RNA scene."""
-        if variant_id == self._current_variant:
-            self.select_variant(variant_id)
+        """Handle a modification being applied — incremental RNA update."""
+        if variant_id == self._current_variant and isinstance(
+            self._dataset, EnrichedVariantDataset
+        ):
+            mod_state = self._dataset.get_modification_state(variant_id)
+            self._rna.update_modifications_only(mod_state)
         self.modification_applied.emit(variant_id, position, mod_code)
+        self.synthesis_updated.emit(variant_id)
+
+    def on_replacement_applied(
+        self, variant_id: str, mods: dict[int, str]
+    ) -> None:
+        """Handle replacement (single/double) — refresh RNA + emit signals."""
+        if variant_id == self._current_variant and isinstance(
+            self._dataset, EnrichedVariantDataset
+        ):
+            mod_state = self._dataset.get_modification_state(variant_id)
+            self._rna.update_modifications_only(mod_state)
+        self.replacement_applied.emit(variant_id, mods)
+        self.synthesis_updated.emit(variant_id)
