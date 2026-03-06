@@ -1,0 +1,2 @@
+[console_scripts]
+expocket-viewer = viewer.__main__:main
