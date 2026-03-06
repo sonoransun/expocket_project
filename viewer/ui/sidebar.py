@@ -22,6 +22,9 @@ class SidebarWidget(QWidget):
     cleavage_site_changed = Signal(int)
     enzyme_changed = Signal(str)
     group_filter_changed = Signal(list)
+    color_mode_changed = Signal(str)
+    landscape_mode_changed = Signal(str)
+    pocket_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -68,6 +71,37 @@ class SidebarWidget(QWidget):
         ann_layout.addWidget(self.show_pairs)
         layout.addWidget(ann_box)
 
+        # Encoding section
+        enc_box = QGroupBox("Encoding / Coloring")
+        enc_layout = QVBoxLayout(enc_box)
+        enc_layout.addWidget(QLabel("Base Color Mode:"))
+        self.color_mode_combo = QComboBox()
+        self.color_mode_combo.addItems([
+            "nucleotide", "molecular_weight", "vdw_volume",
+            "h_bond_donors", "h_bond_acceptors", "hydrophobicity_index",
+            "stacking_energy_5p", "stacking_energy_3p", "sugar_pucker_preference",
+        ])
+        self.color_mode_combo.currentTextChanged.connect(
+            lambda t: self.color_mode_changed.emit(t)
+        )
+        enc_layout.addWidget(self.color_mode_combo)
+
+        self.pocket_check = QCheckBox("Show DICER pocket")
+        self.pocket_check.stateChanged.connect(
+            lambda s: self.pocket_toggled.emit(s == 2)
+        )
+        enc_layout.addWidget(self.pocket_check)
+        layout.addWidget(enc_box)
+
+        # Landscape mode
+        lm_box = QGroupBox("Landscape Layout")
+        lm_layout = QVBoxLayout(lm_box)
+        self.landscape_mode_combo = QComboBox()
+        self.landscape_mode_combo.addItems(["Grid", "PCA Property Space"])
+        self.landscape_mode_combo.currentTextChanged.connect(self._on_landscape_mode)
+        lm_layout.addWidget(self.landscape_mode_combo)
+        layout.addWidget(lm_box)
+
         layout.addStretch()
 
     def _on_site_changed(self, text: str) -> None:
@@ -83,3 +117,7 @@ class SidebarWidget(QWidget):
     def _on_group_filter(self) -> None:
         active = [g for g, cb in self._group_checks.items() if cb.isChecked()]
         self.group_filter_changed.emit(active)
+
+    def _on_landscape_mode(self, text: str) -> None:
+        mode_map = {"Grid": "grid", "PCA Property Space": "pca"}
+        self.landscape_mode_changed.emit(mode_map.get(text, "grid"))

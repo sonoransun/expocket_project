@@ -9,7 +9,12 @@ import random
 import numpy as np
 
 from viewer.config import GROUPS, PREMIR324_REFERENCE_SEQ, PREMIR324_REFERENCE_STRUCT
-from viewer.data.schema import CleavageRecord, VariantDataset, VariantInfo
+from viewer.data.schema import (
+    CleavageRecord,
+    EnrichedVariantDataset,
+    VariantDataset,
+    VariantInfo,
+)
 
 _NTS = ["A", "T", "G", "C"]
 
@@ -123,3 +128,22 @@ def generate_mock_dataset(enzyme: str = "hdicer", seed: int = 42) -> VariantData
             cleavage_data[variant_id] = records
 
     return VariantDataset(variants=variants, cleavage_data=cleavage_data, enzyme=enzyme)
+
+
+def enrich_dataset(dataset: VariantDataset) -> EnrichedVariantDataset:
+    """Upgrade a VariantDataset with physicochemical encodings and DICER pocket."""
+    from viewer.encoding.property_calculator import (
+        compute_dataset_property_matrix,
+        compute_summary_features,
+    )
+    from viewer.encoding.protein_descriptors import build_mock_dicer_pocket
+
+    enriched = EnrichedVariantDataset(
+        variants=dataset.variants,
+        cleavage_data=dataset.cleavage_data,
+        enzyme=dataset.enzyme,
+        property_matrix=compute_dataset_property_matrix(dataset),
+        summary_features=compute_summary_features(dataset),
+        dicer_pocket=build_mock_dicer_pocket(dataset.enzyme),
+    )
+    return enriched

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Signal
 
-from viewer.data.schema import VariantDataset
+from viewer.data.schema import EnrichedVariantDataset, VariantDataset
 from viewer.landscape.scene import DataLandscapeScene
 from viewer.rna3d.scene import RNAHairpinScene
 
@@ -15,6 +15,9 @@ class InteractionController(QObject):
     variant_selected = Signal(str)
     cleavage_site_changed = Signal(int)
     enzyme_changed = Signal(str)
+    modification_applied = Signal(str, int, str)  # variant_id, position, mod_code
+    color_mode_changed = Signal(str)
+    landscape_mode_changed = Signal(str)
 
     def __init__(
         self,
@@ -46,7 +49,13 @@ class InteractionController(QObject):
             return
 
         cleavage_data = self._dataset.cleavage_data.get(variant_id, [])
-        self._rna.set_variant(variant_info, cleavage_data)
+
+        # Pass modification state if available
+        mod_state = None
+        if isinstance(self._dataset, EnrichedVariantDataset):
+            mod_state = self._dataset.get_modification_state(variant_id)
+
+        self._rna.set_variant(variant_info, cleavage_data, mod_state)
         self._landscape.highlight_variant(variant_id)
         self.variant_selected.emit(variant_id)
 
@@ -61,7 +70,10 @@ class InteractionController(QObject):
                 cleavage_data = self._dataset.cleavage_data.get(
                     self._current_variant, []
                 )
-                self._rna.set_variant(variant_info, cleavage_data)
+                mod_state = None
+                if isinstance(self._dataset, EnrichedVariantDataset):
+                    mod_state = self._dataset.get_modification_state(self._current_variant)
+                self._rna.set_variant(variant_info, cleavage_data, mod_state)
 
         self.cleavage_site_changed.emit(site)
 
@@ -74,3 +86,24 @@ class InteractionController(QObject):
             self.select_variant(dataset.variants[0].variant)
 
         self.enzyme_changed.emit(dataset.enzyme)
+
+    def change_color_mode(self, mode: str) -> None:
+        """Change the RNA base coloring mode."""
+        self._rna.set_color_mode(mode)
+        self.color_mode_changed.emit(mode)
+
+    def change_landscape_mode(self, mode: str) -> None:
+        """Switch landscape layout between grid and PCA."""
+        self._landscape.set_layout_mode(mode)
+        self._landscape.build_scatter(self._dataset, self._current_site)
+        if self._current_variant:
+            self._landscape.highlight_variant(self._current_variant)
+        self.landscape_mode_changed.emit(mode)
+
+    def on_modification_applied(
+        self, variant_id: str, position: int, mod_code: str
+    ) -> None:
+        """Handle a modification being applied — refresh the RNA scene."""
+        if variant_id == self._current_variant:
+            self.select_variant(variant_id)
+        self.modification_applied.emit(variant_id, position, mod_code)

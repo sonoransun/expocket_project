@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
 )
 
 from viewer.data.loader import load_dataset
-from viewer.data.schema import VariantDataset
+from viewer.data.mock_data import enrich_dataset
+from viewer.data.schema import EnrichedVariantDataset, VariantDataset
 from viewer.interaction.controller import InteractionController
 from viewer.landscape.widgets import DataLandscapeWidget
+from viewer.rna3d.pocket_scene import DicerPocketOverlay
 from viewer.rna3d.widgets import RNAViewWidget
 from viewer.ui.info_panel import InfoPanelWidget
 from viewer.ui.sidebar import SidebarWidget
@@ -38,10 +40,16 @@ class MainWindow(QMainWindow):
             "QCheckBox { color: #e0e0e0; }"
             "QPushButton { background: #0f3460; color: #e0e0e0; "
             "padding: 6px 12px; border-radius: 4px; }"
+            "QSpinBox { background: #16213e; color: #e0e0e0; padding: 4px; }"
+            "QTableWidget { background: #1e1e1e; color: #e0e0e0; "
+            "gridline-color: #333; }"
+            "QHeaderView::section { background: #16213e; color: #e0e0e0; "
+            "padding: 4px; border: 1px solid #333; }"
         )
 
-        # Load data
-        self.dataset = dataset or load_dataset()
+        # Load and enrich data
+        base_dataset = dataset or load_dataset()
+        self.dataset = enrich_dataset(base_dataset)
 
         # Central area: horizontal splitter with two 3D panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -55,6 +63,10 @@ class MainWindow(QMainWindow):
         splitter.setSizes([600, 1000])
         self.setCentralWidget(splitter)
 
+        # DICER pocket overlay
+        self._pocket_overlay = DicerPocketOverlay()
+        self.rna_widget.scene_manager.scene.add(self._pocket_overlay.group)
+
         # Sidebar (right dock)
         self.sidebar = SidebarWidget()
         sidebar_dock = QDockWidget("Controls", self)
@@ -66,6 +78,15 @@ class MainWindow(QMainWindow):
         info_dock = QDockWidget("Variant Details", self)
         info_dock.setWidget(self.info_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, info_dock)
+
+        # 2D Analysis panel (bottom dock)
+        self._init_2d_panel()
+
+        # Chemistry panel (right dock)
+        self._init_chemistry_panel()
+
+        # Gene panel (bottom dock)
+        self._init_gene_panel()
 
         # Interaction controller
         self.controller = InteractionController(
@@ -82,25 +103,123 @@ class MainWindow(QMainWindow):
         if self.dataset.variants:
             self.controller.select_variant(self.dataset.variants[0].variant)
 
+    def _init_2d_panel(self) -> None:
+        """Initialize the 2D analysis tab widget."""
+        try:
+            from viewer.views2d.widgets import AnalysisTabWidget
+
+            self.analysis_tabs = AnalysisTabWidget()
+            dock = QDockWidget("2D Analysis", self)
+            dock.setWidget(self.analysis_tabs)
+            self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+            self.analysis_tabs.set_dataset(self.dataset)
+        except ImportError:
+            self.analysis_tabs = None
+
+    def _init_chemistry_panel(self) -> None:
+        """Initialize the chemistry lab dock."""
+        try:
+            from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
+            from viewer.chemistry.modification_engine import ModificationEngine
+            from viewer.chemistry.virtual_screen import VirtualScreener
+            from viewer.ui.chemistry_panel import ChemistryPanel
+
+            self._mod_engine = ModificationEngine(self.dataset)
+            self._predictor = CleavageSitePredictor(self.dataset)
+            self._screener = VirtualScreener(
+                self.dataset, self._mod_engine, self._predictor
+            )
+
+            self.chemistry_panel = ChemistryPanel()
+            self.chemistry_panel.set_engines(
+                self._mod_engine, self._screener, self.dataset
+            )
+            dock = QDockWidget("Chemistry Lab", self)
+            dock.setWidget(self.chemistry_panel)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        except ImportError:
+            self.chemistry_panel = None
+
+    def _init_gene_panel(self) -> None:
+        """Initialize the gene targets dock."""
+        try:
+            from viewer.chemistry.mirna_context import MiRNAContextAnalyzer
+            from viewer.ui.gene_panel import GenePanel
+
+            self._mirna_analyzer = MiRNAContextAnalyzer()
+            self.gene_panel = GenePanel()
+            self.gene_panel.set_analyzer(self._mirna_analyzer)
+            dock = QDockWidget("Gene Targets", self)
+            dock.setWidget(self.gene_panel)
+            self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        except ImportError:
+            self.gene_panel = None
+
     def _connect_signals(self) -> None:
         # Sidebar -> controller
         self.sidebar.cleavage_site_changed.connect(
             self.controller.change_cleavage_site
         )
         self.sidebar.enzyme_changed.connect(self._on_enzyme_changed)
+        self.sidebar.color_mode_changed.connect(
+            self.controller.change_color_mode
+        )
+        self.sidebar.landscape_mode_changed.connect(
+            self.controller.change_landscape_mode
+        )
+        self.sidebar.pocket_toggled.connect(self._on_pocket_toggled)
 
         # Controller -> info panel
         self.controller.variant_selected.connect(self._on_variant_selected)
+
+        # Controller -> 2D analysis
+        if self.analysis_tabs is not None:
+            self.controller.cleavage_site_changed.connect(
+                self.analysis_tabs.set_cleavage_site
+            )
 
         # Landscape clicking -> controller
         self.landscape_widget.variant_clicked.connect(
             self.controller.select_variant
         )
 
+        # Chemistry panel signals
+        if hasattr(self, 'chemistry_panel') and self.chemistry_panel is not None:
+            self.chemistry_panel.modification_applied.connect(
+                self.controller.on_modification_applied
+            )
+            self.chemistry_panel.modification_removed.connect(
+                lambda vid, pos: self.controller.on_modification_applied(vid, pos, "")
+            )
+            self.controller.variant_selected.connect(
+                self.chemistry_panel.set_variant
+            )
+
     def _on_variant_selected(self, variant_id: str) -> None:
         self.info_panel.update_variant(variant_id, self.controller.dataset)
 
+        # Update gene panel with cleavage data
+        if hasattr(self, 'gene_panel') and self.gene_panel is not None:
+            rec21 = self.dataset.get_cleavage(variant_id, 21)
+            rec22 = self.dataset.get_cleavage(variant_id, 22)
+            dc21 = rec21.mean_accuracy if rec21 else 0.0
+            dc22 = rec22.mean_accuracy if rec22 else 0.0
+            self.gene_panel.update_cleavage(dc21, dc22)
+
+        # Build pocket overlay if layout is available
+        if self.dataset.dicer_pocket and self.rna_widget.scene_manager._layout:
+            self._pocket_overlay.build(
+                self.dataset.dicer_pocket,
+                self.rna_widget.scene_manager._layout,
+            )
+
     def _on_enzyme_changed(self, enzyme: str) -> None:
-        new_dataset = load_dataset(enzyme=enzyme)
-        self.dataset = new_dataset
-        self.controller.set_dataset(new_dataset)
+        base_dataset = load_dataset(enzyme=enzyme)
+        self.dataset = enrich_dataset(base_dataset)
+        self.controller.set_dataset(self.dataset)
+
+        if self.analysis_tabs is not None:
+            self.analysis_tabs.set_dataset(self.dataset)
+
+    def _on_pocket_toggled(self, visible: bool) -> None:
+        self._pocket_overlay.set_visible(visible)

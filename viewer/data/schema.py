@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from viewer.encoding.protein_descriptors import DicerPocketModel
 
 
 @dataclass
@@ -56,3 +62,35 @@ class VariantDataset:
             if rec.cleavage_site == site:
                 return rec
         return None
+
+
+@dataclass
+class ModificationState:
+    """Tracks chemical modifications applied to a single variant."""
+
+    variant: str
+    modifications: dict[int, str] = field(default_factory=dict)  # position -> mod code
+
+    def apply(self, position: int, mod_code: str) -> None:
+        self.modifications[position] = mod_code
+
+    def remove(self, position: int) -> None:
+        self.modifications.pop(position, None)
+
+    def clear(self) -> None:
+        self.modifications.clear()
+
+
+@dataclass
+class EnrichedVariantDataset(VariantDataset):
+    """VariantDataset extended with physicochemical encodings and modifications."""
+
+    property_matrix: np.ndarray | None = None  # (N_variants, max_seq_len, 12)
+    summary_features: np.ndarray | None = None  # (N_variants, 48)
+    modification_states: dict[str, ModificationState] = field(default_factory=dict)
+    dicer_pocket: DicerPocketModel | None = None
+
+    def get_modification_state(self, variant_id: str) -> ModificationState:
+        if variant_id not in self.modification_states:
+            self.modification_states[variant_id] = ModificationState(variant=variant_id)
+        return self.modification_states[variant_id]

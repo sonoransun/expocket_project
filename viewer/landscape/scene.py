@@ -6,7 +6,7 @@ import numpy as np
 import pygfx
 
 from viewer.config import CLEAVAGE_COLORS_FLOAT, GROUPS, NT_COLORS_FLOAT
-from viewer.data.schema import VariantDataset
+from viewer.data.schema import EnrichedVariantDataset, VariantDataset
 
 
 # Grid layout: 4 groups on X, 64 variants per group spread on Y
@@ -40,6 +40,7 @@ class DataLandscapeScene:
         self._variant_meshes: dict[str, pygfx.Mesh] = {}
         self._variant_positions: dict[str, np.ndarray] = {}
         self._dataset: VariantDataset | None = None
+        self._layout_mode: str = "grid"  # "grid" or "pca"
 
     def clear(self) -> None:
         self._points_group.clear()
@@ -48,6 +49,11 @@ class DataLandscapeScene:
         self._variant_meshes.clear()
         self._variant_positions.clear()
 
+    def set_layout_mode(self, mode: str) -> None:
+        """Switch between 'grid' and 'pca' layout modes."""
+        if mode in ("grid", "pca"):
+            self._layout_mode = mode
+
     def build_scatter(
         self, dataset: VariantDataset, cleavage_site: int = 21
     ) -> None:
@@ -55,11 +61,67 @@ class DataLandscapeScene:
         self.clear()
         self._dataset = dataset
 
+        if self._layout_mode == "pca" and isinstance(dataset, EnrichedVariantDataset):
+            self._build_pca_scatter(dataset, cleavage_site)
+        else:
+            self._build_grid_scatter(dataset, cleavage_site)
+
+        self._add_axes(cleavage_site)
+        self._center_camera()
+
+    def _build_pca_scatter(
+        self, dataset: EnrichedVariantDataset, cleavage_site: int
+    ) -> None:
+        """Build scatter using PCA of summary features for X/Y, accuracy for Z."""
         sphere_geom = pygfx.sphere_geometry(
             radius=1.2, width_segments=10, height_segments=6
         )
 
-        # Layout: X by group, Y by randomized_nts index within group, Z by accuracy
+        features = dataset.summary_features
+        if features is None or features.shape[0] == 0:
+            return
+
+        # PCA via SVD (no sklearn needed)
+        centered = features - features.mean(axis=0)
+        _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+        pc = centered @ Vt[:2].T  # (N, 2) — first two PCs
+
+        # Scale PCs to reasonable visual range
+        pc_range = np.ptp(pc, axis=0)
+        pc_range[pc_range == 0] = 1.0
+        pc_scaled = pc / pc_range * 40.0
+
+        for i, variant in enumerate(dataset.variants):
+            vid = variant.variant
+            group = variant.group
+
+            x = float(pc_scaled[i, 0])
+            y = float(pc_scaled[i, 1])
+
+            rec = dataset.get_cleavage(vid, cleavage_site)
+            z = (rec.mean_accuracy if rec else 0.0) * 40.0
+
+            color = NT_COLORS_FLOAT.get(group, (0.5, 0.5, 0.5, 1.0))
+            acc = rec.mean_accuracy if rec else 0.0
+            bright = 0.5 + acc * 0.5
+            color_mod = (color[0] * bright, color[1] * bright, color[2] * bright)
+
+            material = pygfx.MeshPhongMaterial(color=color_mod)
+            mesh = pygfx.Mesh(sphere_geom, material)
+            pos = np.array([x, y, z])
+            mesh.local.position = tuple(pos)
+            self._points_group.add(mesh)
+            self._variant_meshes[vid] = mesh
+            self._variant_positions[vid] = pos
+
+    def _build_grid_scatter(
+        self, dataset: VariantDataset, cleavage_site: int
+    ) -> None:
+        """Build scatter using the original grid layout."""
+        sphere_geom = pygfx.sphere_geometry(
+            radius=1.2, width_segments=10, height_segments=6
+        )
+
         group_counts: dict[str, int] = {g: 0 for g in GROUPS}
 
         for variant in dataset.variants:
@@ -68,7 +130,6 @@ class DataLandscapeScene:
             idx_in_group = group_counts.get(group, 0)
             group_counts[group] = idx_in_group + 1
 
-            # Grid position within group (8x8 grid for 64 variants)
             row = idx_in_group // 8
             col = idx_in_group % 8
 
@@ -79,7 +140,6 @@ class DataLandscapeScene:
             z = (rec.mean_accuracy if rec else 0.0) * 40.0
 
             color = NT_COLORS_FLOAT.get(group, (0.5, 0.5, 0.5, 1.0))
-            # Modulate brightness by accuracy
             acc = rec.mean_accuracy if rec else 0.0
             bright = 0.5 + acc * 0.5
             color_mod = (
@@ -95,9 +155,6 @@ class DataLandscapeScene:
             self._points_group.add(mesh)
             self._variant_meshes[vid] = mesh
             self._variant_positions[vid] = pos
-
-        self._add_axes(cleavage_site)
-        self._center_camera()
 
     def _add_axes(self, cleavage_site: int) -> None:
         """Add axis lines and group labels."""

@@ -62,3 +62,41 @@ PREMIR324_REFERENCE_SEQ = (
 PREMIR324_REFERENCE_STRUCT = (
     ".((((((((((((((((((((....))))))))))).)))))))))."
 )
+
+# Property colormaps for 2D/3D visualization
+PROPERTY_COLORMAPS = {
+    "molecular_weight": "YlOrRd",
+    "vdw_volume": "YlOrRd",
+    "h_bond_donors": "Blues",
+    "h_bond_acceptors": "Greens",
+    "pka": "coolwarm",
+    "charge_at_ph7": "RdBu_r",
+    "hydrophobicity_index": "RdYlGn_r",
+    "sugar_pucker_preference": "PuBuGn",
+    "stacking_energy_5p": "viridis",
+    "stacking_energy_3p": "viridis",
+    "propeller_twist": "coolwarm",
+    "buckle": "coolwarm",
+}
+
+# DICER pocket domain colors (RGBA float)
+DOMAIN_COLORS = {
+    "PAZ": (0.2, 0.6, 0.9, 0.8),
+    "platform": (0.5, 0.8, 0.3, 0.8),
+    "RNaseIIIa": (0.9, 0.2, 0.2, 0.8),
+    "RNaseIIIb": (0.9, 0.5, 0.1, 0.8),
+    "helicase": (0.7, 0.4, 0.9, 0.8),
+}
+
+# Modification display colors (RGBA float, from modification_db)
+MODIFICATION_COLORS = {
+    "2OMe": (0.2, 0.8, 0.9, 0.85),
+    "LNA": (0.9, 0.3, 0.1, 0.85),
+    "PSI": (0.7, 0.5, 0.9, 0.85),
+    "m6A": (0.9, 0.8, 0.2, 0.85),
+    "2F": (0.3, 0.9, 0.4, 0.85),
+    "PS": (1.0, 0.6, 0.0, 0.85),
+    "s4U": (0.8, 0.7, 0.1, 0.85),
+    "m5C": (0.5, 0.8, 0.7, 0.85),
+    "INO": (0.6, 0.4, 0.8, 0.85),
+}
