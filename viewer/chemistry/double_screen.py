@@ -68,47 +68,48 @@ class DoubleReplacementScreener:
         if mod_codes is None:
             mod_codes = self._rank_modifications(variant_id, positions)
 
-        # Compute all single-position shifts
+        # Batch predict all single-position shifts at once
+        single_pairs: list[tuple[int, str]] = []
         for pos in positions:
             applicable = self._engine.applicable_at_position(variant_id, pos)
             for mod in mod_codes:
-                if mod not in applicable:
-                    continue
-                shifts = self._predictor.predict_shift(variant_id, {pos: mod})
-                ratio = shifts.get(21, 0.0) - shifts.get(22, 0.0)
-                single_cache[(pos, mod)] = ratio
+                if mod in applicable:
+                    single_pairs.append((pos, mod))
 
-        # Screen all pairs
+        if single_pairs:
+            single_shifts_list = self._predictor.predict_shift_batch(
+                variant_id, [{pos: mod} for pos, mod in single_pairs]
+            )
+            for (pos, mod), shifts in zip(single_pairs, single_shifts_list):
+                single_cache[(pos, mod)] = shifts.get(21, 0.0) - shifts.get(22, 0.0)
+
+        # Build all valid double pairs and batch predict
         results: list[DoubleScreenResult] = []
         single_keys = list(single_cache.keys())
+        double_pairs = [
+            ((pos1, mod1), (pos2, mod2))
+            for (pos1, mod1), (pos2, mod2) in combinations(single_keys, 2)
+            if pos1 != pos2
+        ]
 
-        for (pos1, mod1), (pos2, mod2) in combinations(single_keys, 2):
-            if pos1 == pos2:
-                continue
-
-            # Double prediction
-            double_shifts = self._predictor.predict_shift(
-                variant_id, {pos1: mod1, pos2: mod2}
+        if double_pairs:
+            double_shifts_list = self._predictor.predict_shift_batch(
+                variant_id,
+                [{pos1: mod1, pos2: mod2} for (pos1, mod1), (pos2, mod2) in double_pairs],
             )
-            d21 = double_shifts.get(21, 0.0)
-            d22 = double_shifts.get(22, 0.0)
-            double_ratio = d21 - d22
-
-            # Synergy
-            single_sum = single_cache[(pos1, mod1)] + single_cache[(pos2, mod2)]
-            synergy = double_ratio - single_sum
-
-            # Estimate synthesis yield with both mods
-            yield_est = self._estimate_yield(seq, {pos1: mod1, pos2: mod2})
-
-            results.append(DoubleScreenResult(
-                position_1=pos1, position_2=pos2,
-                mod_1=mod1, mod_2=mod2,
-                delta_dc21=d21, delta_dc22=d22,
-                delta_ratio=double_ratio,
-                synergy=synergy,
-                synthesis_yield=yield_est,
-            ))
+            for ((pos1, mod1), (pos2, mod2)), double_shifts in zip(double_pairs, double_shifts_list):
+                d21 = double_shifts.get(21, 0.0)
+                d22 = double_shifts.get(22, 0.0)
+                double_ratio = d21 - d22
+                single_sum = single_cache[(pos1, mod1)] + single_cache[(pos2, mod2)]
+                results.append(DoubleScreenResult(
+                    position_1=pos1, position_2=pos2,
+                    mod_1=mod1, mod_2=mod2,
+                    delta_dc21=d21, delta_dc22=d22,
+                    delta_ratio=double_ratio,
+                    synergy=double_ratio - single_sum,
+                    synthesis_yield=self._estimate_yield(seq, {pos1: mod1, pos2: mod2}),
+                ))
 
         results.sort(key=lambda r: abs(r.delta_ratio), reverse=True)
         return results[:top_n]
@@ -157,24 +158,27 @@ class DoubleReplacementScreener:
         """Return top mod codes by average |delta_ratio| across positions."""
         from viewer.encoding.modification_db import MODIFICATIONS_DB
 
+        # Collect all applicable (pos, mod) pairs for sampling in one pass
+        sample_pairs: list[tuple[int, str]] = []
+        for pos in positions[:6]:  # Sample first 6 positions for speed
+            applicable = self._engine.applicable_at_position(variant_id, pos)
+            for mod_code in MODIFICATIONS_DB:
+                if mod_code in applicable:
+                    sample_pairs.append((pos, mod_code))
+
         mod_scores: dict[str, float] = {}
         mod_counts: dict[str, int] = {}
 
-        for mod_code in MODIFICATIONS_DB:
-            total = 0.0
-            count = 0
-            for pos in positions[:6]:  # Sample first 6 positions for speed
-                applicable = self._engine.applicable_at_position(variant_id, pos)
-                if mod_code not in applicable:
-                    continue
-                ratio = self._predictor.predict_dc_ratio_shift(
-                    variant_id, {pos: mod_code}
-                )
-                total += abs(ratio)
-                count += 1
-            if count > 0:
-                mod_scores[mod_code] = total / count
-                mod_counts[mod_code] = count
+        if sample_pairs:
+            shifts_list = self._predictor.predict_shift_batch(
+                variant_id, [{pos: mod} for pos, mod in sample_pairs]
+            )
+            for (_, mod_code), shifts in zip(sample_pairs, shifts_list):
+                ratio = shifts.get(21, 0.0) - shifts.get(22, 0.0)
+                mod_scores[mod_code] = mod_scores.get(mod_code, 0.0) + abs(ratio)
+                mod_counts[mod_code] = mod_counts.get(mod_code, 0) + 1
+            for mod_code in mod_scores:
+                mod_scores[mod_code] /= mod_counts[mod_code]
 
         ranked = sorted(mod_scores, key=lambda m: mod_scores[m], reverse=True)
         return ranked[:top_k]

@@ -94,6 +94,9 @@ class MainWindow(QMainWindow):
         # Replacement panel (right dock)
         self._init_replacement_panel()
 
+        # Batch screening panel (bottom dock)
+        self._init_batch_panel()
+
         # Interaction controller
         self.controller = InteractionController(
             rna_scene=self.rna_widget.scene_manager,
@@ -205,6 +208,27 @@ class MainWindow(QMainWindow):
             self.replacement_panel = None
             self._double_screener = None
 
+    def _init_batch_panel(self) -> None:
+        """Initialize the batch screening dock."""
+        try:
+            from viewer.chemistry.batch_screener import BatchScreener
+            from viewer.ui.batch_panel import BatchPanel
+
+            self._batch_screener = BatchScreener(
+                screener=self._screener,
+                double_screener=self._double_screener,
+                dataset=self.dataset,
+            )
+            self.batch_panel = BatchPanel()
+            self.batch_panel.set_dataset(self.dataset)
+            dock = QDockWidget("Batch Screening", self)
+            dock.setWidget(self.batch_panel)
+            self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+            self._batch_worker = None
+        except (ImportError, AttributeError):
+            self.batch_panel = None
+            self._batch_worker = None
+
     def _connect_signals(self) -> None:
         # Sidebar -> controller
         self.sidebar.cleavage_site_changed.connect(
@@ -279,6 +303,20 @@ class MainWindow(QMainWindow):
                 self.analysis_tabs.set_current_variant
             )
 
+        # Batch screening panel
+        if hasattr(self, 'batch_panel') and self.batch_panel is not None:
+            self.batch_panel.run_requested.connect(self._on_batch_run)
+            self.batch_panel.cancel_requested.connect(self._on_batch_cancel)
+            self.batch_panel.jump_to_variant.connect(self.controller.select_variant)
+            if hasattr(self, 'chemistry_panel') and self.chemistry_panel is not None:
+                self.chemistry_panel.add_to_batch_requested.connect(
+                    self.batch_panel.add_job
+                )
+            if hasattr(self, 'replacement_panel') and self.replacement_panel is not None:
+                self.replacement_panel.add_to_batch_requested.connect(
+                    self.batch_panel.add_job
+                )
+
     def _on_variant_selected(self, variant_id: str) -> None:
         self.info_panel.update_variant(variant_id, self.controller.dataset)
 
@@ -298,12 +336,30 @@ class MainWindow(QMainWindow):
             )
 
     def _on_enzyme_changed(self, enzyme: str) -> None:
+        # Cancel any in-flight batch before replacing the dataset/engines
+        if hasattr(self, '_batch_worker') and self._batch_worker and self._batch_worker.isRunning():
+            self._batch_worker.cancel()
+            self._batch_worker.wait()
+
         base_dataset = load_dataset(enzyme=enzyme)
         self.dataset = enrich_dataset(base_dataset)
         self.controller.set_dataset(self.dataset)
 
         if self.analysis_tabs is not None:
             self.analysis_tabs.set_dataset(self.dataset)
+
+        # Rebuild batch screener with fresh dataset and engines
+        if hasattr(self, 'batch_panel') and self.batch_panel is not None:
+            try:
+                from viewer.chemistry.batch_screener import BatchScreener
+                self._batch_screener = BatchScreener(
+                    screener=self._screener,
+                    double_screener=self._double_screener,
+                    dataset=self.dataset,
+                )
+                self.batch_panel.set_dataset(self.dataset)
+            except (ImportError, AttributeError):
+                pass
 
     def _on_synthesis_updated(self, variant_id: str) -> None:
         """Refresh synthesis panel when modifications change."""
@@ -319,6 +375,21 @@ class MainWindow(QMainWindow):
         """Push replacement comparison data to 2D tab."""
         if self.analysis_tabs is not None:
             self.analysis_tabs.update_replacement(comparison)
+
+    def _on_batch_run(self, jobs: list) -> None:
+        from viewer.workers.batch_worker import BatchWorker
+
+        if self._batch_worker and self._batch_worker.isRunning():
+            return
+        self._batch_worker = BatchWorker(self._batch_screener, jobs)
+        self._batch_worker.result_ready.connect(self.batch_panel._on_result)
+        self._batch_worker.progress_updated.connect(self.batch_panel._on_progress)
+        self._batch_worker.batch_finished.connect(self.batch_panel._on_batch_done)
+        self._batch_worker.start()
+
+    def _on_batch_cancel(self) -> None:
+        if self._batch_worker:
+            self._batch_worker.cancel()
 
     def _on_pocket_toggled(self, visible: bool) -> None:
         self._pocket_overlay.set_visible(visible)

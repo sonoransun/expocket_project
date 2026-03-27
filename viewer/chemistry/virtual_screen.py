@@ -44,24 +44,33 @@ class VirtualScreener:
         if variant is None:
             return []
 
-        results: list[ScreenResult] = []
         seq = variant.pre_mirna_sequence
 
+        # Collect all applicable (position, modification) pairs first
+        pairs: list[tuple[int, str]] = []
         for pos in range(len(seq)):
-            applicable = self._engine.applicable_at_position(variant_id, pos)
-            for mod_code in applicable:
-                shifts = self._predictor.predict_shift(
-                    variant_id, {pos: mod_code}
-                )
-                d21 = shifts.get(21, 0.0)
-                d22 = shifts.get(22, 0.0)
-                results.append(ScreenResult(
-                    position=pos,
-                    modification=mod_code,
-                    delta_dc21=d21,
-                    delta_dc22=d22,
-                    delta_ratio=d21 - d22,
-                ))
+            for mod_code in self._engine.applicable_at_position(variant_id, pos):
+                pairs.append((pos, mod_code))
+
+        if not pairs:
+            return []
+
+        # Predict all pairs in a single vectorized batch call
+        shifts_list = self._predictor.predict_shift_batch(
+            variant_id, [{pos: mod} for pos, mod in pairs]
+        )
+
+        results: list[ScreenResult] = []
+        for (pos, mod_code), shifts in zip(pairs, shifts_list):
+            d21 = shifts.get(21, 0.0)
+            d22 = shifts.get(22, 0.0)
+            results.append(ScreenResult(
+                position=pos,
+                modification=mod_code,
+                delta_dc21=d21,
+                delta_dc22=d22,
+                delta_ratio=d21 - d22,
+            ))
 
         results.sort(key=lambda r: abs(r.delta_ratio), reverse=True)
         return results

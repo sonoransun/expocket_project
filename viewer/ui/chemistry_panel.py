@@ -28,9 +28,10 @@ if TYPE_CHECKING:
 class ChemistryPanel(QWidget):
     """Panel for applying chemical modifications and running virtual screens."""
 
-    modification_applied = Signal(str, int, str)   # variant_id, position, mod_code
-    modification_removed = Signal(str, int)         # variant_id, position
-    screen_requested = Signal(str)                  # variant_id
+    modification_applied = Signal(str, int, str)     # variant_id, position, mod_code
+    modification_removed = Signal(str, int)           # variant_id, position
+    screen_requested = Signal(str)                    # variant_id
+    add_to_batch_requested = Signal(str, str)         # variant_id, mode ("single")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,9 +80,14 @@ class ChemistryPanel(QWidget):
         # Virtual screen section
         screen_box = QGroupBox("Virtual Screen")
         screen_layout = QVBoxLayout(screen_box)
+        screen_btn_row = QHBoxLayout()
         self._screen_btn = QPushButton("Screen All Modifications")
         self._screen_btn.clicked.connect(self._on_screen)
-        screen_layout.addWidget(self._screen_btn)
+        screen_btn_row.addWidget(self._screen_btn)
+        self._batch_btn = QPushButton("Add to Batch")
+        self._batch_btn.clicked.connect(self._on_add_to_batch)
+        screen_btn_row.addWidget(self._batch_btn)
+        screen_layout.addLayout(screen_btn_row)
 
         self._screen_table = QTableWidget(0, 5)
         self._screen_table.setHorizontalHeaderLabels(
@@ -141,6 +147,10 @@ class ChemistryPanel(QWidget):
                 self._current_variant, top_n=15
             )
             self._populate_screen_table(results)
+
+    def _on_add_to_batch(self) -> None:
+        if self._current_variant:
+            self.add_to_batch_requested.emit(self._current_variant, "single")
 
     def _update_mod_table(self) -> None:
         self._mod_table.setRowCount(0)

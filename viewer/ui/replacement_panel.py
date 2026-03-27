@@ -34,8 +34,9 @@ _BASE_CHANGES = {"A", "U", "G", "C"}
 class ReplacementPanel(QWidget):
     """Panel for single and double nucleotide/modification replacement."""
 
-    replacement_applied = Signal(str, dict)  # variant_id, {pos: mod_code}
-    comparison_ready = Signal(dict)  # comparison data for 2D plot
+    replacement_applied = Signal(str, dict)   # variant_id, {pos: mod_code}
+    comparison_ready = Signal(dict)           # comparison data for 2D plot
+    add_to_batch_requested = Signal(str, str) # variant_id, mode ("double")
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -117,6 +118,9 @@ class ReplacementPanel(QWidget):
         self._clv_zone_check = QCheckBox("Cleavage zone only")
         self._clv_zone_check.setChecked(True)
         screen_row.addWidget(self._clv_zone_check)
+        self._batch_btn = QPushButton("Add to Batch")
+        self._batch_btn.clicked.connect(self._on_add_to_batch)
+        screen_row.addWidget(self._batch_btn)
         double_layout.addLayout(screen_row)
 
         # Results table
@@ -207,6 +211,10 @@ class ReplacementPanel(QWidget):
                 except ValueError:
                     pass
             self.replacement_applied.emit(self._current_variant, mods)
+
+    def _on_add_to_batch(self) -> None:
+        if self._current_variant:
+            self.add_to_batch_requested.emit(self._current_variant, "double")
 
     def _on_screen(self) -> None:
         if not self._current_variant or not self._double_screener:

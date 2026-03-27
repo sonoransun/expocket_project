@@ -22,6 +22,8 @@ class CleavageSitePredictor:
         self._alpha = alpha
         self._weights: dict[int, np.ndarray] = {}  # site -> (F,) coefficients
         self._intercepts: dict[int, float] = {}
+        self._weights_matrix: np.ndarray | None = None  # (F, 4) stacked, for batch
+        self._sites: list[int] = [20, 21, 22, 23]
         self._fit()
 
     def _fit(self) -> None:
@@ -56,6 +58,11 @@ class CleavageSitePredictor:
 
             self._weights[site] = w
             self._intercepts[site] = y_mean
+
+        # Build stacked weight matrix for vectorized batch prediction
+        self._weights_matrix = np.column_stack(
+            [self._weights[s] for s in self._sites]
+        )  # shape (F, 4)
 
     def predict_shift(
         self,
@@ -103,6 +110,47 @@ class CleavageSitePredictor:
         """Predict DC21/DC22 ratio change from modifications."""
         shifts = self.predict_shift(variant_id, modifications)
         return shifts.get(21, 0.0) - shifts.get(22, 0.0)
+
+    def predict_shift_batch(
+        self,
+        variant_id: str,
+        modifications_list: list[dict[int, str]],
+    ) -> list[dict[int, float]]:
+        """Predict accuracy shifts for many modification dicts at once.
+
+        Vectorizes the ridge regression step: one (M, F) @ (F, 4) multiply
+        replaces M separate dot products.  Returns a list parallel to
+        modifications_list, each element being {site: delta_accuracy}.
+        """
+        if not modifications_list:
+            return []
+        variant = self._dataset.get_variant(variant_id)
+        if variant is None or not self._weights or self._weights_matrix is None:
+            return [{s: 0.0 for s in self._sites} for _ in modifications_list]
+
+        from viewer.data.schema import VariantDataset
+        from viewer.encoding.property_calculator import compute_summary_features as _csf
+
+        baseline_feat = _csf(VariantDataset(variants=[variant]))[0]  # (F,)
+
+        mod_feats = np.stack(
+            [
+                self._summarize_single(
+                    compute_modified_properties(variant.pre_mirna_sequence, mods)
+                )
+                for mods in modifications_list
+            ],
+            axis=0,
+        )  # (M, F)
+
+        base_norm = (baseline_feat - self._mean) / self._std   # (F,)
+        mod_norm = (mod_feats - self._mean) / self._std         # (M, F)
+        deltas = (mod_norm - base_norm) @ self._weights_matrix  # (M, 4)
+
+        return [
+            {s: float(deltas[i, j]) for j, s in enumerate(self._sites)}
+            for i in range(len(modifications_list))
+        ]
 
     @staticmethod
     def _summarize_single(props: np.ndarray) -> np.ndarray:
