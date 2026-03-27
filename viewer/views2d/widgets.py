@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
     from viewer.chemistry.modification_engine import ModificationEngine
     from viewer.data.schema import EnrichedVariantDataset, SynthesisPlan
+    from viewer.views2d.editing_map import EditingMapWidget
 
 
 class _CanvasTab(QWidget):
@@ -104,6 +105,7 @@ class AnalysisTabWidget(QTabWidget):
     """Tab widget containing all 2D analysis panels."""
 
     modification_cell_clicked = Signal(int, str)  # position, mod_code
+    editing_site_clicked = Signal(object)          # emits TargetSite
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -121,6 +123,16 @@ class AnalysisTabWidget(QTabWidget):
         self.addTab(self._mod_impact_tab, "Mod Impact")
         self.addTab(self._synthesis_tab, "Synthesis")
         self.addTab(self._replacement_tab, "Replacements")
+
+        # Gene editing map tab
+        self._editing_map: "EditingMapWidget | None" = None
+        try:
+            from viewer.views2d.editing_map import EditingMapWidget
+            self._editing_map = EditingMapWidget()
+            self.addTab(self._editing_map, "Editing")
+            self._editing_map.site_clicked.connect(self.editing_site_clicked)
+        except Exception:
+            self._editing_map = None
 
         self._dataset: EnrichedVariantDataset | None = None
         self._cleavage_site: int = 21
@@ -184,6 +196,16 @@ class AnalysisTabWidget(QTabWidget):
             ax.text(0.5, 0.5, "No synthesis plan", ha="center", va="center", color="#ccc")
         self._apply_dark_axes(fig)
         self._synthesis_tab.redraw()
+
+    def update_editing_sites(
+        self,
+        variant_id: str,
+        dataset: "EnrichedVariantDataset",
+        sites_by_tool: dict,
+    ) -> None:
+        """Refresh the editing map tab with new site data."""
+        if self._editing_map is not None:
+            self._editing_map.update_variant(variant_id, dataset, sites_by_tool)
 
     def update_replacement(self, comparison: dict | None) -> None:
         """Update the replacement comparison tab."""

@@ -97,6 +97,9 @@ class MainWindow(QMainWindow):
         # Batch screening panel (bottom dock)
         self._init_batch_panel()
 
+        # Gene editing panel (right dock)
+        self._init_editing_panel()
+
         # Interaction controller
         self.controller = InteractionController(
             rna_scene=self.rna_widget.scene_manager,
@@ -303,6 +306,16 @@ class MainWindow(QMainWindow):
                 self.analysis_tabs.set_current_variant
             )
 
+        # Gene editing panel signals
+        if hasattr(self, 'editing_panel') and self.editing_panel is not None:
+            self.controller.variant_selected.connect(self.editing_panel.set_variant)
+            self.editing_panel.edit_designed.connect(self._on_edit_designed)
+            self.editing_panel.edit_applied.connect(self._on_edit_applied)
+            if self.analysis_tabs is not None and hasattr(self.analysis_tabs, 'editing_site_clicked'):
+                self.analysis_tabs.editing_site_clicked.connect(
+                    self.editing_panel.select_site
+                )
+
         # Batch screening panel
         if hasattr(self, 'batch_panel') and self.batch_panel is not None:
             self.batch_panel.run_requested.connect(self._on_batch_run)
@@ -334,6 +347,19 @@ class MainWindow(QMainWindow):
                 self.dataset.dicer_pocket,
                 self.rna_widget.scene_manager._layout,
             )
+
+        # Auto-populate editing map for all tools
+        if (
+            hasattr(self, "_target_finder")
+            and self._target_finder is not None
+            and self.analysis_tabs is not None
+        ):
+            try:
+                sites = self._target_finder.find_all_tools(variant_id, self.dataset)
+                self._last_editing_sites = sites
+                self.analysis_tabs.update_editing_sites(variant_id, self.dataset, sites)
+            except Exception:
+                pass
 
     def _on_enzyme_changed(self, enzyme: str) -> None:
         # Cancel any in-flight batch before replacing the dataset/engines
@@ -393,3 +419,71 @@ class MainWindow(QMainWindow):
 
     def _on_pocket_toggled(self, visible: bool) -> None:
         self._pocket_overlay.set_visible(visible)
+
+    def _init_editing_panel(self) -> None:
+        """Initialize the gene editing dock panel."""
+        try:
+            from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
+            from viewer.genome_editing.edit_engine import EditEngine
+            from viewer.genome_editing.guide_designer import GuideDesigner
+            from viewer.genome_editing.impact_predictor import EditImpactPredictor
+            from viewer.genome_editing.off_target import OffTargetScorer
+            from viewer.genome_editing.target_finder import TargetFinder
+            from viewer.ui.editing_panel import EditingPanel
+
+            if not hasattr(self, "_predictor"):
+                self._predictor = CleavageSitePredictor(self.dataset)
+
+            self._target_finder = TargetFinder()
+            self._guide_designer = GuideDesigner()
+            self._edit_engine = EditEngine()
+            self._edit_impact = EditImpactPredictor(self._predictor, self.dataset)
+            self._off_target_scorer = OffTargetScorer()
+            self._last_editing_sites: dict = {}
+
+            self.editing_panel = EditingPanel(
+                dataset=self.dataset,
+                target_finder=self._target_finder,
+                guide_designer=self._guide_designer,
+                edit_engine=self._edit_engine,
+                impact_predictor=self._edit_impact,
+                off_target_scorer=self._off_target_scorer,
+                parent=self,
+            )
+            dock = QDockWidget("Gene Editing", self)
+            dock.setWidget(self.editing_panel)
+            self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        except Exception as exc:
+            print(f"[editing] panel not available: {exc}")
+            self.editing_panel = None
+
+    def _on_edit_designed(self, variant_id: str, design: object) -> None:
+        """Push editing sites to the 2D map when a design is ready."""
+        from viewer.genome_editing.target_finder import TargetFinder
+        if not hasattr(self, "_target_finder"):
+            return
+        try:
+            sites = self._target_finder.find_all_tools(variant_id, self.dataset)
+            self._last_editing_sites = sites
+            if self.analysis_tabs is not None:
+                self.analysis_tabs.update_editing_sites(variant_id, self.dataset, sites)
+        except Exception:
+            pass
+
+    def _on_edit_applied(self, variant_id: str, modified_rna: str) -> None:
+        """Preview a modified RNA sequence in the 3D RNA viewer."""
+        from viewer.data.schema import VariantInfo
+        variant = self.dataset.get_variant(variant_id)
+        if variant is None:
+            return
+        # Construct a temporary VariantInfo with the modified sequence
+        temp = VariantInfo(
+            variant=f"{variant_id}_edited",
+            group=variant.group,
+            randomized_nts=variant.randomized_nts,
+            pre_mirna_sequence=modified_rna,
+            concrete_struct=variant.concrete_struct,
+            flanking_length_5p=variant.flanking_length_5p,
+        )
+        cleavage_data = self.dataset.cleavage_data.get(variant_id, [])
+        self.rna_widget.scene_manager.set_variant(temp, cleavage_data, None)

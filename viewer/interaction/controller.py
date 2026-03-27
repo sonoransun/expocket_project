@@ -20,6 +20,10 @@ class InteractionController(QObject):
     synthesis_updated = Signal(str)  # variant_id
     color_mode_changed = Signal(str)
     landscape_mode_changed = Signal(str)
+    # Gene editing signals
+    edit_designed = Signal(str, object)   # variant_id, EditDesign
+    edit_applied = Signal(str, str)       # variant_id, modified_rna
+    editing_tool_changed = Signal(str)    # tool name
 
     def __init__(
         self,
@@ -125,3 +129,16 @@ class InteractionController(QObject):
             self._rna.update_modifications_only(mod_state)
         self.replacement_applied.emit(variant_id, mods)
         self.synthesis_updated.emit(variant_id)
+
+    def on_edit_designed(self, variant_id: str, design: object) -> None:
+        """Store the latest edit design and broadcast it."""
+        self._last_edit_design = design
+        self.edit_designed.emit(variant_id, design)
+
+    def on_edit_applied(self, variant_id: str, modified_rna: str) -> None:
+        """Apply a sequence edit to the RNA 3D view."""
+        self.edit_applied.emit(variant_id, modified_rna)
+
+    def on_editing_tool_changed(self, tool_name: str) -> None:
+        """Broadcast a tool selection change for panels that need to refresh."""
+        self.editing_tool_changed.emit(tool_name)

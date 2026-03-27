@@ -109,6 +109,17 @@ YIELD_COLORS = {
 }
 YIELD_THRESHOLDS = {"good": 0.5, "warn": 0.2}
 
+# Gene editing tool colors (RGBA float)
+EDITING_TOOL_COLORS: dict[str, tuple[float, float, float, float]] = {
+    "cas9":      (0.2,  0.6,  1.0,  0.85),  # blue
+    "cas12a":    (0.4,  0.9,  0.4,  0.85),  # green
+    "casclover": (1.0,  0.7,  0.1,  0.85),  # amber
+    "talen":     (0.9,  0.3,  0.3,  0.85),  # red
+    "zfn":       (0.8,  0.4,  0.9,  0.85),  # purple
+    "retron":    (0.3,  0.9,  0.8,  0.85),  # teal
+    "nicer":     (1.0,  0.5,  0.2,  0.85),  # orange
+}
+
 # Synergy display colors for double replacement screening
 SYNERGY_COLORS = {
     "cooperative": "#5AC9A1",    # synergy > 0
