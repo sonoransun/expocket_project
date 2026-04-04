@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 from viewer.data.schema import EnrichedVariantDataset
 from viewer.encoding.property_calculator import (
@@ -30,6 +34,7 @@ class CleavageSitePredictor:
         """Fit ridge regression for each cleavage site."""
         features = self._dataset.summary_features
         if features is None or features.shape[0] == 0:
+            _log.warning("CleavageSitePredictor: no features available — predictions will be zeros")
             return
 
         X = features.copy()
@@ -58,6 +63,15 @@ class CleavageSitePredictor:
 
             self._weights[site] = w
             self._intercepts[site] = y_mean
+
+        # Check for degenerate weights
+        for site in [20, 21, 22, 23]:
+            w = self._weights.get(site)
+            if w is not None and np.allclose(w, 0.0, atol=1e-10):
+                _log.warning(
+                    "CleavageSitePredictor: weights for DC%d are all near-zero "
+                    "(no discriminative data)", site
+                )
 
         # Build stacked weight matrix for vectorized batch prediction
         self._weights_matrix = np.column_stack(
@@ -110,6 +124,40 @@ class CleavageSitePredictor:
         """Predict DC21/DC22 ratio change from modifications."""
         shifts = self.predict_shift(variant_id, modifications)
         return shifts.get(21, 0.0) - shifts.get(22, 0.0)
+
+    def predict_base_change(
+        self,
+        variant_id: str,
+        position: int,
+        new_base: str,
+    ) -> dict[int, float]:
+        """Predict accuracy shift from a nucleotide substitution."""
+        variant = self._dataset.get_variant(variant_id)
+        if variant is None or not self._weights:
+            return {s: 0.0 for s in [20, 21, 22, 23]}
+        seq = variant.pre_mirna_sequence
+        if position < 0 or position >= len(seq):
+            return {s: 0.0 for s in [20, 21, 22, 23]}
+        # Create mutated sequence
+        mutated_seq = seq[:position] + new_base + seq[position + 1:]
+        # Compute features for mutated sequence
+        from viewer.encoding.property_calculator import compute_modified_properties
+        mod_props = compute_modified_properties(mutated_seq, {})
+        mod_feat = self._summarize_single(mod_props)
+        # Baseline
+        from viewer.data.schema import VariantDataset
+        from viewer.encoding.property_calculator import compute_summary_features as _csf
+        baseline_feat = _csf(VariantDataset(variants=[variant]))[0]
+        result = {}
+        for site in [20, 21, 22, 23]:
+            w = self._weights.get(site)
+            if w is None:
+                result[site] = 0.0
+                continue
+            base_pred = float(((baseline_feat - self._mean) / self._std) @ w)
+            mod_pred = float(((mod_feat - self._mean) / self._std) @ w)
+            result[site] = mod_pred - base_pred
+        return result
 
     def predict_shift_batch(
         self,

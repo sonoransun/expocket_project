@@ -170,7 +170,10 @@ class RNAHairpinScene:
 
     def _add_base_pairs(self, layout: HairpinLayout) -> None:
         """Draw thin lines between paired bases (hydrogen bonds)."""
+        n = layout.base_positions.shape[0]
         for i5, i3 in layout.pair_indices:
+            if i5 < 0 or i5 >= n or i3 < 0 or i3 >= n:
+                continue
             pos5 = layout.base_positions[i5].astype(np.float32)
             pos3 = layout.base_positions[i3].astype(np.float32)
             positions = np.array([pos5, pos3], dtype=np.float32)

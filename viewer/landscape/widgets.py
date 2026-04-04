@@ -55,8 +55,9 @@ class DataLandscapeWidget(QWidget):
                     if vid:
                         self.variant_clicked.emit(vid)
                         return
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as exc:
+            import logging
+            logging.getLogger(__name__).debug("Picking via pygfx failed: %s", exc)
 
         # Fallback: use nearest-variant by world position
         try:
@@ -67,8 +68,9 @@ class DataLandscapeWidget(QWidget):
                 vid = self.scene_manager.get_nearest_variant(pos)
                 if vid:
                     self.variant_clicked.emit(vid)
-        except Exception:
-            pass
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).debug("Fallback picking failed: %s", exc)
 
     def load_dataset(
         self, dataset: VariantDataset, cleavage_site: int = 21

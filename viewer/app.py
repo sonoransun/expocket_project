@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -114,6 +116,8 @@ class MainWindow(QMainWindow):
         self.landscape_widget.load_dataset(self.dataset, cleavage_site=21)
         if self.dataset.variants:
             self.controller.select_variant(self.dataset.variants[0].variant)
+        else:
+            logging.getLogger(__name__).warning("Dataset is empty — no variants to display")
 
     def _init_2d_panel(self) -> None:
         """Initialize the 2D analysis tab widget."""
@@ -260,6 +264,12 @@ class MainWindow(QMainWindow):
             self.controller.select_variant
         )
 
+        # Gene panel: update on cleavage site change
+        if hasattr(self, 'gene_panel') and self.gene_panel is not None:
+            self.controller.cleavage_site_changed.connect(
+                self._on_cleavage_site_for_gene_panel
+            )
+
         # Chemistry panel signals
         if hasattr(self, 'chemistry_panel') and self.chemistry_panel is not None:
             self.chemistry_panel.modification_applied.connect(
@@ -359,9 +369,25 @@ class MainWindow(QMainWindow):
                 self._last_editing_sites = sites
                 self.analysis_tabs.update_editing_sites(variant_id, self.dataset, sites)
             except Exception:
-                pass
+                logging.getLogger(__name__).warning(
+                    "Failed to update editing sites for %s", variant_id, exc_info=True
+                )
+
+    def _on_cleavage_site_for_gene_panel(self, site: int) -> None:
+        """Refresh gene panel when cleavage site changes."""
+        if not hasattr(self, 'gene_panel') or self.gene_panel is None:
+            return
+        if self.controller.current_variant is None:
+            return
+        vid = self.controller.current_variant
+        rec21 = self.dataset.get_cleavage(vid, 21)
+        rec22 = self.dataset.get_cleavage(vid, 22)
+        dc21 = rec21.mean_accuracy if rec21 else 0.0
+        dc22 = rec22.mean_accuracy if rec22 else 0.0
+        self.gene_panel.update_cleavage(dc21, dc22)
 
     def _on_enzyme_changed(self, enzyme: str) -> None:
+        _log = logging.getLogger(__name__)
         # Cancel any in-flight batch before replacing the dataset/engines
         if hasattr(self, '_batch_worker') and self._batch_worker and self._batch_worker.isRunning():
             self._batch_worker.cancel()
@@ -374,7 +400,64 @@ class MainWindow(QMainWindow):
         if self.analysis_tabs is not None:
             self.analysis_tabs.set_dataset(self.dataset)
 
-        # Rebuild batch screener with fresh dataset and engines
+        # Rebuild chemistry engines with the new dataset
+        if hasattr(self, '_mod_engine'):
+            try:
+                from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
+                from viewer.chemistry.modification_engine import ModificationEngine
+                from viewer.chemistry.virtual_screen import VirtualScreener
+
+                self._mod_engine = ModificationEngine(self.dataset)
+                self._predictor = CleavageSitePredictor(self.dataset)
+                self._screener = VirtualScreener(
+                    self.dataset, self._mod_engine, self._predictor
+                )
+
+                if hasattr(self, 'chemistry_panel') and self.chemistry_panel is not None:
+                    self.chemistry_panel.set_engines(
+                        self._mod_engine, self._screener, self.dataset
+                    )
+            except (ImportError, AttributeError) as exc:
+                _log.warning("Failed to rebuild chemistry engines: %s", exc)
+
+        if hasattr(self, '_double_screener') and self._double_screener is not None:
+            try:
+                from viewer.chemistry.double_screen import DoubleReplacementScreener
+
+                self._double_screener = DoubleReplacementScreener(
+                    self.dataset, self._predictor, self._mod_engine
+                )
+                if hasattr(self, 'replacement_panel') and self.replacement_panel is not None:
+                    self.replacement_panel.set_engines(
+                        self._mod_engine, self._predictor, self._double_screener, self.dataset
+                    )
+            except (ImportError, AttributeError) as exc:
+                _log.warning("Failed to rebuild double screener: %s", exc)
+
+        # Rebuild editing engines with new dataset
+        if hasattr(self, '_edit_impact'):
+            try:
+                from viewer.genome_editing.impact_predictor import EditImpactPredictor
+
+                self._edit_impact = EditImpactPredictor(self._predictor, self.dataset)
+                if hasattr(self, 'editing_panel') and self.editing_panel is not None:
+                    self.editing_panel._dataset = self.dataset
+                    self.editing_panel._impact = self._edit_impact
+            except (ImportError, AttributeError) as exc:
+                _log.warning("Failed to rebuild editing engines: %s", exc)
+
+        # Rebuild synthesis planner
+        if hasattr(self, '_synthesis_planner') and self._synthesis_planner is not None:
+            try:
+                from viewer.chemistry.synthesis_pathway import SynthesisPlanner
+
+                self._synthesis_planner = SynthesisPlanner(self.dataset)
+                if hasattr(self, 'synthesis_panel') and self.synthesis_panel is not None:
+                    self.synthesis_panel.set_planner(self._synthesis_planner, self.dataset)
+            except (ImportError, AttributeError) as exc:
+                _log.warning("Failed to rebuild synthesis planner: %s", exc)
+
+        # Rebuild batch screener with fresh engines
         if hasattr(self, 'batch_panel') and self.batch_panel is not None:
             try:
                 from viewer.chemistry.batch_screener import BatchScreener
@@ -454,7 +537,7 @@ class MainWindow(QMainWindow):
             dock.setWidget(self.editing_panel)
             self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
         except Exception as exc:
-            print(f"[editing] panel not available: {exc}")
+            logging.getLogger(__name__).warning("Editing panel not available: %s", exc)
             self.editing_panel = None
 
     def _on_edit_designed(self, variant_id: str, design: object) -> None:
@@ -468,7 +551,9 @@ class MainWindow(QMainWindow):
             if self.analysis_tabs is not None:
                 self.analysis_tabs.update_editing_sites(variant_id, self.dataset, sites)
         except Exception:
-            pass
+            logging.getLogger(__name__).warning(
+                "Failed to update editing sites for %s", variant_id, exc_info=True
+            )
 
     def _on_edit_applied(self, variant_id: str, modified_rna: str) -> None:
         """Preview a modified RNA sequence in the 3D RNA viewer."""

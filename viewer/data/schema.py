@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,8 @@ import numpy as np
 
 if TYPE_CHECKING:
     from viewer.encoding.protein_descriptors import DicerPocketModel
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +27,16 @@ class VariantInfo:
     new_define_structure_1: str = ""
     new_define_structure_2: str = ""
 
+    def __post_init__(self) -> None:
+        if not self.pre_mirna_sequence:
+            _log.warning("VariantInfo %s has empty sequence", self.variant)
+        if self.flanking_length_5p < 0:
+            _log.warning(
+                "VariantInfo %s has negative flanking_length_5p (%d), clamping to 0",
+                self.variant, self.flanking_length_5p,
+            )
+            self.flanking_length_5p = 0
+
 
 @dataclass
 class CleavageRecord:
@@ -37,6 +50,19 @@ class CleavageRecord:
     accuracy_rep1: float = 0.0
     accuracy_rep2: float = 0.0
     accuracy_rep3: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.cleavage_site not in (20, 21, 22, 23):
+            _log.warning(
+                "CleavageRecord %s has unusual cleavage_site=%d (expected 20-23)",
+                self.variant, self.cleavage_site,
+            )
+        if self.mean_accuracy < 0.0 or self.mean_accuracy > 1.0:
+            _log.warning(
+                "CleavageRecord %s site=%d has mean_accuracy=%.4f outside [0, 1]",
+                self.variant, self.cleavage_site, self.mean_accuracy,
+            )
+            self.mean_accuracy = max(0.0, min(1.0, self.mean_accuracy))
 
 
 @dataclass

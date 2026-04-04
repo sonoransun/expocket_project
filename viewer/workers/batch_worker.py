@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QThread, Signal
 
 from viewer.chemistry.batch_screener import BatchJob, BatchResult, BatchScreener
+
+_log = logging.getLogger(__name__)
 
 
 class BatchWorker(QThread):
@@ -40,7 +44,11 @@ class BatchWorker(QThread):
         def on_done() -> None:
             self.batch_finished.emit()
 
-        self._screener._run(self._jobs, on_result, on_done)
+        try:
+            self._screener._run(self._jobs, on_result, on_done)
+        except Exception:
+            _log.exception("BatchWorker.run() failed")
+            self.batch_finished.emit()
 
     def cancel(self) -> None:
         self._screener.cancel()

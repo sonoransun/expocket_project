@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import csv
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -116,6 +119,10 @@ class BatchPanel(QWidget):
         self._jump_btn.setEnabled(False)
         self._jump_btn.clicked.connect(self._on_jump)
         jump_row.addWidget(self._jump_btn)
+        self._export_btn = QPushButton("Export CSV")
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self._export_csv)
+        jump_row.addWidget(self._export_btn)
         jump_row.addStretch()
         results_layout.addLayout(jump_row)
         self._results_table.cellClicked.connect(
@@ -189,6 +196,8 @@ class BatchPanel(QWidget):
 
         if result.error:
             return
+
+        self._export_btn.setEnabled(True)
 
         # Append top results to live table
         hits = result.single_results or result.double_results
@@ -281,3 +290,36 @@ class BatchPanel(QWidget):
             self._summary_table.setItem(row, 3, QTableWidgetItem(mode))
             self._summary_row[variant_id] = row
         self._summary_best[variant_id] = best_ratio
+
+    def _export_csv(self) -> None:
+        """Export all results and summary to a CSV file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"batch_results_{timestamp}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Batch Results", default_name, "CSV (*.csv)"
+        )
+        if not path:
+            return
+
+        with open(path, "w", newline="") as f:
+            writer = csv.writer(f)
+            # Detailed results
+            writer.writerow(["Section: Detailed Results"])
+            writer.writerow(["Variant", "Position", "Modification",
+                             "Delta_DC21", "Delta_DC22", "Delta_Ratio"])
+            for row in range(self._results_table.rowCount()):
+                writer.writerow([
+                    self._results_table.item(row, col).text()
+                    if self._results_table.item(row, col) else ""
+                    for col in range(6)
+                ])
+            writer.writerow([])
+            # Summary
+            writer.writerow(["Section: Best Hit per Variant"])
+            writer.writerow(["Variant", "Best_Mod", "Delta_Ratio", "Mode"])
+            for row in range(self._summary_table.rowCount()):
+                writer.writerow([
+                    self._summary_table.item(row, col).text()
+                    if self._summary_table.item(row, col) else ""
+                    for col in range(4)
+                ])

@@ -178,7 +178,9 @@ class DoubleReplacementScreener:
                 mod_scores[mod_code] = mod_scores.get(mod_code, 0.0) + abs(ratio)
                 mod_counts[mod_code] = mod_counts.get(mod_code, 0) + 1
             for mod_code in mod_scores:
-                mod_scores[mod_code] /= mod_counts[mod_code]
+                count = mod_counts.get(mod_code, 0)
+                if count > 0:
+                    mod_scores[mod_code] /= count
 
         ranked = sorted(mod_scores, key=lambda m: mod_scores[m], reverse=True)
         return ranked[:top_k]

@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -21,6 +22,8 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -69,6 +72,7 @@ class EditingPanel(QWidget):
         self._selected_site: TargetSite | None = None
         self._last_design: EditDesign | None = None
         self._pocket_only: bool = False
+        self._compare_all_sites: dict[str, list] = {}
 
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
@@ -191,11 +195,32 @@ class EditingPanel(QWidget):
         row_btns.addWidget(export_btn)
         results_layout.addLayout(row_btns)
         layout.addWidget(results_box)
+
+        # -- Multi-tool comparison table --
+        compare_box = QGroupBox("Cross-Tool Comparison")
+        compare_layout = QVBoxLayout(compare_box)
+        self._compare_btn = QPushButton("Compare All Tools")
+        self._compare_btn.clicked.connect(self._run_comparison)
+        compare_layout.addWidget(self._compare_btn)
+
+        self._compare_table = QTableWidget(0, 5)
+        self._compare_table.setHorizontalHeaderLabels(
+            ["Tool", "Sites", "Best Score", "Best Cut", "GC%"]
+        )
+        self._compare_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self._compare_table.setMaximumHeight(200)
+        self._compare_table.cellClicked.connect(self._on_compare_row_clicked)
+        compare_layout.addWidget(self._compare_table)
+        layout.addWidget(compare_box)
+
         layout.addStretch()
 
     # ── Public slots ────────────────────────────────────────────────────
     def set_variant(self, variant_id: str) -> None:
         self._current_variant = variant_id
+        self._compare_table.setRowCount(0)
         self._rescan()
 
     def select_site(self, site: "TargetSite") -> None:
@@ -226,6 +251,46 @@ class EditingPanel(QWidget):
     def _on_tool_changed(self) -> None:
         if self._current_variant:
             self._rescan()
+
+    def _run_comparison(self) -> None:
+        """Scan all 7 tools for the current variant and populate comparison table."""
+        if self._current_variant is None:
+            return
+        all_sites = self._finder.find_all_tools(self._current_variant, self._dataset)
+        self._compare_table.setRowCount(0)
+        self._compare_all_sites = all_sites
+
+        for tool_name in TOOL_NAMES:
+            sites = all_sites.get(tool_name, [])
+            row = self._compare_table.rowCount()
+            self._compare_table.insertRow(row)
+
+            display_name = TOOLS[tool_name].display_name
+            n_sites = len(sites)
+            best = sites[0] if sites else None
+            best_score = f"{best.binding_score:.2f}" if best else "\u2014"
+            best_cut = str(best.cut_positions[0]) if best and best.cut_positions else "\u2014"
+            best_gc = f"{best.gc_content * 100:.0f}" if best and hasattr(best, "gc_content") else "\u2014"
+
+            items = [display_name, str(n_sites), best_score, best_cut, best_gc]
+            for col, text in enumerate(items):
+                item = QTableWidgetItem(text)
+                self._compare_table.setItem(row, col, item)
+
+            if n_sites == 0:
+                for col in range(5):
+                    it = self._compare_table.item(row, col)
+                    if it:
+                        it.setForeground(QColor(100, 100, 100))
+
+    def _on_compare_row_clicked(self, row: int, col: int) -> None:
+        """Switch to the clicked tool in the main tool combo."""
+        if row < 0 or row >= len(TOOL_NAMES):
+            return
+        tool_name = TOOL_NAMES[row]
+        combo_idx = self._tool_combo.findData(tool_name)
+        if combo_idx >= 0:
+            self._tool_combo.setCurrentIndex(combo_idx)
 
     def _on_pocket_only_toggled(self, checked: bool) -> None:
         self._pocket_only = checked

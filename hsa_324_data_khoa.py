@@ -68,7 +68,7 @@ plt.yticks(visible=False)
 plt.show()
     
 df_combine_nop = pd.concat([human_dfA_nop, human_dfT_nop, human_dfC_nop, human_dfG_nop])
-df_DC21_nop = df_combine_nop[df_combine_pnk['Cleavage_site']==21]
+df_DC21_nop = df_combine_nop[df_combine_nop['Cleavage_site']==21]
 ax = plt.figure(figsize=(10,8))
 ax = sns.boxplot(data=df_DC21_nop, x='Group', y='Mean_Cleavage_accuracy', color="#5AC9A1", showfliers=False, order=group_order)
 ax =sns.stripplot(data=df_DC21_nop, x='Group', y='Mean_Cleavage_accuracy', color="#2CA87B",size=5, jitter=True, order=group_order)

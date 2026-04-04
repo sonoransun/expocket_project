@@ -167,7 +167,14 @@ CANONICAL_PROPERTIES["T"] = NucleotidePropertyVector(
 
 def get_property(nt: str) -> NucleotidePropertyVector:
     """Get the property vector for a nucleotide, defaulting to uridine."""
-    return CANONICAL_PROPERTIES.get(nt.upper(), CANONICAL_PROPERTIES["U"])
+    result = CANONICAL_PROPERTIES.get(nt.upper())
+    if result is None:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Unknown nucleotide '%s' — falling back to U properties", nt
+        )
+        result = CANONICAL_PROPERTIES["U"]
+    return result
 
 
 def encode_sequence(sequence: str) -> np.ndarray:

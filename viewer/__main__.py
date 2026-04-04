@@ -5,10 +5,13 @@ Run with: python -m viewer
 
 from __future__ import annotations
 
+import logging
 import sys
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
+
     from PySide6.QtWidgets import QApplication
 
     from viewer.app import MainWindow

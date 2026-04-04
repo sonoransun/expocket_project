@@ -79,9 +79,14 @@ class BatchScreener:
         with ThreadPoolExecutor(max_workers=n_workers) as pool:
             futures = {pool.submit(self._run_one, job): job for job in jobs}
             for fut in as_completed(futures):
-                result = fut.result()
-                if not self._cancel.is_set():
-                    on_result(result)
+                if self._cancel.is_set():
+                    break
+                try:
+                    result = fut.result()
+                except Exception as exc:
+                    job = futures[fut]
+                    result = BatchResult(job.variant_id, job.mode, error=str(exc))
+                on_result(result)
 
         on_done()
 

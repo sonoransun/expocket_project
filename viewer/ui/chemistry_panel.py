@@ -30,7 +30,6 @@ class ChemistryPanel(QWidget):
 
     modification_applied = Signal(str, int, str)     # variant_id, position, mod_code
     modification_removed = Signal(str, int)           # variant_id, position
-    screen_requested = Signal(str)                    # variant_id
     add_to_batch_requested = Signal(str, str)         # variant_id, mode ("single")
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -45,7 +44,7 @@ class ChemistryPanel(QWidget):
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Position:"))
         self._pos_spinner = QSpinBox()
-        self._pos_spinner.setRange(0, 62)
+        self._pos_spinner.setRange(0, 200)
         row1.addWidget(self._pos_spinner)
         row1.addWidget(QLabel("Mod:"))
         self._mod_combo = QComboBox()
@@ -116,6 +115,10 @@ class ChemistryPanel(QWidget):
 
     def set_variant(self, variant_id: str) -> None:
         self._current_variant = variant_id
+        if self._dataset:
+            vi = self._dataset.get_variant(variant_id)
+            if vi:
+                self._pos_spinner.setRange(0, max(0, len(vi.pre_mirna_sequence) - 1))
         self._update_mod_table()
 
     def _on_apply(self) -> None:
@@ -126,8 +129,10 @@ class ChemistryPanel(QWidget):
                 self._engine.apply_modification(self._current_variant, pos, mod)
                 self._update_mod_table()
                 self.modification_applied.emit(self._current_variant, pos, mod)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                import logging
+                logging.getLogger(__name__).info("Modification rejected: %s", exc)
+                self._apply_btn.setToolTip(f"Error: {exc}")
 
     def _on_remove(self) -> None:
         if self._current_variant and self._engine:

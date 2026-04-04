@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,10 +24,14 @@ from PySide6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
+        from viewer.chemistry.cleavage_predictor import CleavageSitePredictor
     from viewer.chemistry.double_screen import DoubleReplacementScreener, DoubleScreenResult
     from viewer.chemistry.modification_engine import ModificationEngine
     from viewer.data.schema import EnrichedVariantDataset
+
+from viewer.config import SYNERGY_COLORS
+
+_log = logging.getLogger(__name__)
 
 _MOD_OPTIONS = ["A", "U", "G", "C", "2OMe", "LNA", "PSI", "m6A", "2F", "PS", "s4U", "m5C", "INO"]
 _BASE_CHANGES = {"A", "U", "G", "C"}
@@ -52,7 +58,7 @@ class ReplacementPanel(QWidget):
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Position:"))
         self._single_pos = QSpinBox()
-        self._single_pos.setRange(0, 62)
+        self._single_pos.setRange(0, 200)
         row1.addWidget(self._single_pos)
         row1.addWidget(QLabel("Current:"))
         self._single_current_nt = QLabel("—")
@@ -89,7 +95,7 @@ class ReplacementPanel(QWidget):
         r1 = QHBoxLayout()
         r1.addWidget(QLabel("Pos 1:"))
         self._double_pos1 = QSpinBox()
-        self._double_pos1.setRange(0, 62)
+        self._double_pos1.setRange(0, 200)
         r1.addWidget(self._double_pos1)
         r1.addWidget(QLabel("Mod 1:"))
         self._double_mod1 = QComboBox()
@@ -101,7 +107,7 @@ class ReplacementPanel(QWidget):
         r2 = QHBoxLayout()
         r2.addWidget(QLabel("Pos 2:"))
         self._double_pos2 = QSpinBox()
-        self._double_pos2.setRange(0, 62)
+        self._double_pos2.setRange(0, 200)
         self._double_pos2.setValue(5)
         r2.addWidget(self._double_pos2)
         r2.addWidget(QLabel("Mod 2:"))
@@ -166,10 +172,14 @@ class ReplacementPanel(QWidget):
 
     def set_variant(self, variant_id: str) -> None:
         self._current_variant = variant_id
-        # Update current nucleotide display
+        # Update current nucleotide display and spinner ranges
         if self._dataset:
             vi = self._dataset.get_variant(variant_id)
             if vi:
+                max_pos = max(0, len(vi.pre_mirna_sequence) - 1)
+                self._single_pos.setRange(0, max_pos)
+                self._double_pos1.setRange(0, max_pos)
+                self._double_pos2.setRange(0, max_pos)
                 pos = self._single_pos.value()
                 if pos < len(vi.pre_mirna_sequence):
                     self._single_current_nt.setText(vi.pre_mirna_sequence[pos])
@@ -178,7 +188,7 @@ class ReplacementPanel(QWidget):
         pos = self._single_pos.value()
         replacement = self._single_replacement.currentText()
         if replacement in _BASE_CHANGES:
-            return {}  # Base changes handled differently
+            return {pos: f"BASE:{replacement}"}
         return {pos: replacement}
 
     def _on_single_preview(self) -> None:
@@ -187,7 +197,14 @@ class ReplacementPanel(QWidget):
         mods = self._get_single_mods()
         if not mods:
             return
-        shifts = self._predictor.predict_shift(self._current_variant, mods)
+        pos, code = next(iter(mods.items()))
+        if code.startswith("BASE:"):
+            new_base = code.split(":")[1]
+            shifts = self._predictor.predict_base_change(
+                self._current_variant, pos, new_base
+            )
+        else:
+            shifts = self._predictor.predict_shift(self._current_variant, mods)
         self._single_result_table.setRowCount(4)
         for i, site in enumerate([20, 21, 22, 23]):
             self._single_result_table.setItem(i, 0, QTableWidgetItem(f"DC{site}"))
@@ -206,10 +223,14 @@ class ReplacementPanel(QWidget):
         mods = self._get_single_mods()
         if mods:
             for pos, mod in mods.items():
+                if mod.startswith("BASE:"):
+                    _log.info("Base changes are preview-only; use Gene Editing panel to apply sequence mutations")
+                    return
                 try:
                     self._engine.apply_modification(self._current_variant, pos, mod)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    _log.info("Modification rejected at pos %d: %s", pos, exc)
+                    return
             self.replacement_applied.emit(self._current_variant, mods)
 
     def _on_add_to_batch(self) -> None:
@@ -221,7 +242,9 @@ class ReplacementPanel(QWidget):
             return
         positions = None
         if not self._clv_zone_check.isChecked():
-            positions = list(range(63))  # All positions
+            vi = self._dataset.get_variant(self._current_variant) if self._dataset else None
+            seq_len = len(vi.pre_mirna_sequence) if vi else 63
+            positions = list(range(seq_len))
 
         self._double_results = self._double_screener.screen_double(
             self._current_variant, positions=positions, top_n=30
@@ -242,8 +265,11 @@ class ReplacementPanel(QWidget):
             # Color synergy
             syn_item = QTableWidgetItem(f"{r.synergy:+.4f}")
             if r.synergy > 0.001:
-                syn_item.setForeground(QLabel().palette().text().color())
-                syn_item.setForeground(QLabel("").palette().text().color())
+                syn_item.setForeground(QColor(SYNERGY_COLORS["cooperative"]))
+            elif r.synergy < -0.001:
+                syn_item.setForeground(QColor(SYNERGY_COLORS["antagonistic"]))
+            else:
+                syn_item.setForeground(QColor(SYNERGY_COLORS["neutral"]))
             self._double_table.setItem(row, 5, syn_item)
 
             self._double_table.setItem(row, 6, QTableWidgetItem(f"{r.synthesis_yield * 100:.1f}"))
@@ -272,6 +298,7 @@ class ReplacementPanel(QWidget):
         for pos, mod in mods.items():
             try:
                 self._engine.apply_modification(self._current_variant, pos, mod)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                _log.info("Modification rejected at pos %d: %s", pos, exc)
+                return
         self.replacement_applied.emit(self._current_variant, mods)
